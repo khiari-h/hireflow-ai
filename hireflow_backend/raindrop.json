@@ -1,0 +1,124 @@
+{
+  "name": "HireFlow AI",
+  "version": "1.0.0",
+  "description": "Multi-Agent AI Hiring Platform - LiquidMetal AI Championship 2025",
+  
+  "raindrop": {
+    "framework": "express",
+    "runtime": "node",
+    "entry": "server.js",
+    "port": 3000
+  },
+  
+  "environment": {
+    "GEMINI_API_KEY": {
+      "type": "secret",
+      "description": "Google Gemini API key for AI agents",
+      "required": true
+    },
+    "REDIS_URL": {
+      "type": "string",
+      "description": "Vultr Valkey connection URL",
+      "default": "redis://localhost:6379"
+    },
+    "NODE_ENV": {
+      "type": "string",
+      "default": "production"
+    },
+    "DEBUG": {
+      "type": "boolean",
+      "default": false
+    },
+    "CORS_ORIGINS": {
+      "type": "string",
+      "description": "Comma-separated CORS origins"
+    }
+  },
+  
+  "services": {
+    "database": {
+      "type": "smartsql",
+      "name": "hireflow_db",
+      "engine": "postgresql",
+      "description": "SmartSQL database for candidates, evaluations, and decisions"
+    },
+    "memory": {
+      "type": "smartmemory",
+      "name": "hireflow_memory",
+      "description": "SmartMemory for agent context and session storage"
+    },
+    "cache": {
+      "type": "vultr_valkey",
+      "name": "hireflow_cache",
+      "description": "Vultr Managed Valkey for response caching"
+    }
+  },
+  
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/health",
+      "description": "Health check"
+    },
+    {
+      "method": "POST",
+      "path": "/api/candidates/upload",
+      "description": "Upload candidate CV"
+    },
+    {
+      "method": "POST",
+      "path": "/api/candidates/:candidateId/evaluate",
+      "description": "Run multi-agent evaluation"
+    },
+    {
+      "method": "POST",
+      "path": "/api/candidates/:candidateId/decide",
+      "description": "Make final hiring decision"
+    },
+    {
+      "method": "GET",
+      "path": "/api/candidates/:candidateId/status",
+      "description": "Get evaluation status"
+    },
+    {
+      "method": "GET",
+      "path": "/api/candidates/:candidateId/result",
+      "description": "Get full evaluation result"
+    }
+  ],
+  
+  "agents": [
+    {
+      "name": "HR Agent",
+      "role": "Evaluates cultural fit and soft skills",
+      "model": "gemini-pro",
+      "temperature": 0.7
+    },
+    {
+      "name": "Manager Agent",
+      "role": "Evaluates technical capabilities",
+      "model": "gemini-pro",
+      "temperature": 0.7
+    },
+    {
+      "name": "Sales Agent",
+      "role": "Evaluates business impact",
+      "model": "gemini-pro",
+      "temperature": 0.7
+    }
+  ],
+  
+  "features": {
+    "multi_agent_evaluation": true,
+    "parallel_processing": true,
+    "smart_caching": true,
+    "consensus_negotiation": true
+  },
+  
+  "performance": {
+    "upload": "~100ms",
+    "evaluation": "~10-15s (3 agents parallel)",
+    "decision": "~2-3s",
+    "total_flow": "~12-20s"
+  }
+}
