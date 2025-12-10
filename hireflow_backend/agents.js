@@ -147,16 +147,14 @@ class Agent {
       const responseText = result.response.text();
       
       // Parse JSON from response
-      const jsonMatch = responseText.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        throw new Error('Invalid response format');
+      const regex = /\{[\s\S]*\}/;
+      const jsonMatch = regex.exec(responseText);
+      if (jsonMatch) {
+        const evaluation = JSON.parse(jsonMatch[0]);
+        console.log(`✅ ${this.name} score: ${evaluation.score}/10 - ${evaluation.recommendation}`);
+        return evaluation;
       }
-      
-      const evaluation = JSON.parse(jsonMatch[0]);
-      
-      console.log(`✅ ${this.name} score: ${evaluation.score}/10 - ${evaluation.recommendation}`);
-      
-      return evaluation;
+      throw new Error('Invalid JSON response format from agent');
     } catch (error) {
       console.error(`❌ ${this.name} evaluation failed:`, error.message);
       
@@ -259,12 +257,14 @@ Respond ONLY in valid JSON format:
       const result = await model.generateContent(negotiationPrompt);
       const responseText = result.response.text();
       
-      const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+      const regex = /\{[\s\S]*\}/;
+      const jsonMatch = regex.exec(responseText);
       if (jsonMatch) {
         const negotiation = JSON.parse(jsonMatch[0]);
         console.log(`✅ Consensus reached: ${negotiation.consensus_score}/10`);
         return negotiation;
       }
+      throw new Error('Failed to parse JSON negotiation from AI response');
     }
     
     return null;
