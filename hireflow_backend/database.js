@@ -1,98 +1,145 @@
 /**
  * Database Module (SmartSQL - Raindrop)
- * Handles all database operations
- * 
- * SETUP INSTRUCTIONS:
- * When deployed on Raindrop, SmartSQL credentials will be automatically provided
- * For local development, use SQLite as fallback
+ * Handles all database operations.
+ * Dynamically supports PostgreSQL (for production via DATABASE_URL)
+ * and SQLite (for local development).
  */
-
 import sqlite3 from 'sqlite3';
 import { open } from 'sqlite';
+import pg from 'pg';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
+const { Pool } = pg;
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// This will be our database adapter, whether it's pg or sqlite
 let db;
+let dbType;
+
+// SQL dialect-specific statements
+const createTablesSQL = {
+  pg: `
+    CREATE TABLE IF NOT EXISTS candidates (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      email TEXT NOT NULL,
+      cv_text TEXT NOT NULL,
+      role_applying TEXT NOT NULL,
+      uploaded_at TEXT NOT NULL,
+      status TEXT DEFAULT 'pending',
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS evaluations (
+      id SERIAL PRIMARY KEY,
+      candidate_id TEXT NOT NULL REFERENCES candidates(id),
+      agent_type TEXT NOT NULL,
+      score REAL,
+      recommendation TEXT,
+      analysis TEXT,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS decisions (
+      id SERIAL PRIMARY KEY,
+      candidate_id TEXT NOT NULL REFERENCES candidates(id),
+      final_decision TEXT NOT NULL,
+      reasoning TEXT,
+      confidence_score REAL,
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    );
+  `,
+  sqlite: `
+    CREATE TABLE IF NOT EXISTS candidates (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      email TEXT NOT NULL,
+      cv_text TEXT NOT NULL,
+      role_applying TEXT NOT NULL,
+      uploaded_at TEXT NOT NULL,
+      status TEXT DEFAULT 'pending',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS evaluations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      candidate_id TEXT NOT NULL,
+      agent_type TEXT NOT NULL,
+      score REAL,
+      recommendation TEXT,
+      analysis TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (candidate_id) REFERENCES candidates(id)
+    );
+    CREATE TABLE IF NOT EXISTS decisions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      candidate_id TEXT NOT NULL,
+      final_decision TEXT NOT NULL,
+      reasoning TEXT,
+      confidence_score REAL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (candidate_id) REFERENCES candidates(id)
+    );
+  `
+};
+
+// Simple adapter to handle differences between pg and sqlite
+const dbAdapter = {
+  exec: (sql) => db.query(sql),
+  run: (sql, params = []) => {
+    if (dbType === 'pg') {
+      const pgSql = sql.replace(/\?/g, (match, index) => `$${(sql.slice(0, sql.indexOf(match))).split('?').length}`);
+      return db.query(pgSql, params);
+    }
+    return db.run(sql, params);
+  },
+  get: async (sql, params = []) => {
+    if (dbType === 'pg') {
+      const pgSql = sql.replace(/\?/g, (match, index) => `$${(sql.slice(0, sql.indexOf(match))).split('?').length}`);
+      const res = await db.query(pgSql, params);
+      return res.rows[0];
+    }
+    return db.get(sql, params);
+  },
+  all: async (sql, params = []) => {
+    if (dbType === 'pg') {
+      const pgSql = sql.replace(/\?/g, (match, index) => `$${(sql.slice(0, sql.indexOf(match))).split('?').length}`);
+      const res = await db.query(pgSql, params);
+      return res.rows;
+    }
+    return db.all(sql, params);
+  }
+};
+
 
 export async function initializeDatabase() {
   try {
-    // For Raindrop deployment: will use SmartSQL
-    // For local development: use SQLite
-    
-    // Open SQLite database (for development)
-    db = await open({
-      filename: path.join(__dirname, 'hireflow.db'),
-      driver: sqlite3.Database
-    });
-    
-    console.log('📦 Using SQLite for local development');
-    console.log('💡 When deployed on Raindrop, SmartSQL will be used automatically');
-    
-    // Create tables
-    await createTables();
-    
-    return {
-      saveCandidateQuery,
-      getCandidateQuery,
-      saveEvaluationsQuery,
-      saveDecisionQuery,
-      getEvaluationsQuery,
-      getDecisionQuery
-    };
-  } catch (error) {
-    console.error('❌ Database initialization failed:', error);
-    throw error;
-  }
-}
+    const databaseUrl = process.env.DATABASE_URL;
 
-async function createTables() {
-  try {
-    // Candidates table
-    await db.exec(`
-      CREATE TABLE IF NOT EXISTS candidates (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        email TEXT NOT NULL,
-        cv_text TEXT NOT NULL,
-        role_applying TEXT NOT NULL,
-        uploaded_at TEXT NOT NULL,
-        status TEXT DEFAULT 'pending',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-    
-    // Evaluations table
-    await db.exec(`
-      CREATE TABLE IF NOT EXISTS evaluations (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        candidate_id TEXT NOT NULL,
-        agent_type TEXT NOT NULL,
-        score REAL,
-        recommendation TEXT,
-        analysis TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (candidate_id) REFERENCES candidates(id)
-      )
-    `);
-    
-    // Decisions table
-    await db.exec(`
-      CREATE TABLE IF NOT EXISTS decisions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        candidate_id TEXT NOT NULL,
-        final_decision TEXT NOT NULL,
-        reasoning TEXT,
-        confidence_score REAL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (candidate_id) REFERENCES candidates(id)
-      )
-    `);
+    if (databaseUrl) {
+      // Production: Use PostgreSQL on Raindrop
+      dbType = 'pg';
+      db = new Pool({
+        connectionString: databaseUrl,
+      });
+      console.log('📦 Using PostgreSQL for production');
+      console.log('💡 Connecting via DATABASE_URL...');
+      await db.connect();
+      await dbAdapter.exec(createTablesSQL.pg);
+
+    } else {
+      // Development: Use SQLite fallback
+      dbType = 'sqlite';
+      db = await open({
+        filename: path.join(__dirname, 'hireflow.db'),
+        driver: sqlite3.Database
+      });
+      console.log('📦 Using SQLite for local development');
+      await db.exec(createTablesSQL.sqlite);
+    }
     
     console.log('✅ Database tables created/verified');
+
   } catch (error) {
-    console.error('❌ Table creation failed:', error);
+    console.error('❌ Database initialization failed:', error);
     throw error;
   }
 }
@@ -103,7 +150,7 @@ async function createTables() {
 
 export async function saveCandidateQuery(candidate) {
   try {
-    await db.run(
+    await dbAdapter.run(
       `INSERT INTO candidates 
        (id, name, email, cv_text, role_applying, uploaded_at, status) 
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -117,7 +164,6 @@ export async function saveCandidateQuery(candidate) {
         candidate.status
       ]
     );
-    
     console.log(`✅ Candidate ${candidate.id} saved to database`);
   } catch (error) {
     console.error('Error saving candidate:', error);
@@ -127,7 +173,7 @@ export async function saveCandidateQuery(candidate) {
 
 export async function getCandidateQuery(candidateId) {
   try {
-    const candidate = await db.get(
+    const candidate = await dbAdapter.get(
       'SELECT * FROM candidates WHERE id = ?',
       [candidateId]
     );
@@ -145,7 +191,7 @@ export async function getCandidateQuery(candidateId) {
 export async function saveEvaluationsQuery(candidateId, evaluations) {
   try {
     for (const [agentType, evaluation] of Object.entries(evaluations)) {
-      await db.run(
+      await dbAdapter.run(
         `INSERT INTO evaluations 
          (candidate_id, agent_type, score, recommendation, analysis) 
          VALUES (?, ?, ?, ?, ?)`,
@@ -158,7 +204,6 @@ export async function saveEvaluationsQuery(candidateId, evaluations) {
         ]
       );
     }
-    
     console.log(`✅ Evaluations for ${candidateId} saved to database`);
   } catch (error) {
     console.error('Error saving evaluations:', error);
@@ -168,7 +213,7 @@ export async function saveEvaluationsQuery(candidateId, evaluations) {
 
 export async function getEvaluationsQuery(candidateId) {
   try {
-    const evaluations = await db.all(
+    const evaluations = await dbAdapter.all(
       'SELECT * FROM evaluations WHERE candidate_id = ?',
       [candidateId]
     );
@@ -185,7 +230,7 @@ export async function getEvaluationsQuery(candidateId) {
 
 export async function saveDecisionQuery(candidateId, decision) {
   try {
-    await db.run(
+    await dbAdapter.run(
       `INSERT INTO decisions 
        (candidate_id, final_decision, reasoning, confidence_score) 
        VALUES (?, ?, ?, ?)`,
@@ -196,7 +241,6 @@ export async function saveDecisionQuery(candidateId, decision) {
         decision.confidence_score
       ]
     );
-    
     console.log(`✅ Decision for ${candidateId} saved to database`);
   } catch (error) {
     console.error('Error saving decision:', error);
@@ -206,7 +250,7 @@ export async function saveDecisionQuery(candidateId, decision) {
 
 export async function getDecisionQuery(candidateId) {
   try {
-    const decision = await db.get(
+    const decision = await dbAdapter.get(
       'SELECT * FROM decisions WHERE candidate_id = ? ORDER BY created_at DESC LIMIT 1',
       [candidateId]
     );
@@ -223,7 +267,7 @@ export async function getDecisionQuery(candidateId) {
 
 export async function checkDatabase() {
   try {
-    await db.get('SELECT 1');
+    await dbAdapter.get('SELECT 1');
     return true;
   } catch (error) {
     console.error('Database health check failed:', error);

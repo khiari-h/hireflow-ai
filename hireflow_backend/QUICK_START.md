@@ -1,16 +1,16 @@
-# 🚀 Quick Setup Guide
+# 🚀 Guide de Démarrage Rapide
 
-## Step 1: Get Gemini API Key (2 min)
+## Étape 1 : Obtenir la Clé API Gemini (2 min)
 
-1. Go to: https://aistudio.google.com/app/apikey
-2. Click "Create API key in new project"
-3. Copy the key
-4. Paste in `.env` file:
+1. Allez sur : https://aistudio.google.com/app/apikey
+2. Cliquez sur "Create API key in new project"
+3. Copiez la clé
+4. Collez-la dans le fichier `.env` :
    ```
    GEMINI_API_KEY=your_key_here
    ```
 
-## Step 2: Install Dependencies (1 min)
+## Étape 2 : Installer les Dépendances (1 min)
 
 ```bash
 npm install

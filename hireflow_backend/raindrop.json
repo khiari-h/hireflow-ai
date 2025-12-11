@@ -11,9 +11,14 @@
   },
   
   "environment": {
-    "GEMINI_API_KEY": {
-      "type": "secret",
-      "description": "Google Gemini API key for AI agents",
+    "RAINDROP_SMART_INFERENCE_URL": {
+      "type": "string",
+      "description": "Raindrop SmartInference endpoint URL",
+      "required": true
+    },
+    "DATABASE_URL": {
+      "type": "string",
+      "description": "SmartSQL database connection URL",
       "required": true
     },
     "REDIS_URL": {

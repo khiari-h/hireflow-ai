@@ -1,30 +1,26 @@
 /**
- * AI Agents Module (Gemini API)
- * 
+ * AI Agents Module (Raindrop SmartInference)
+ *
  * Three specialized agents:
  * 1. HR Agent - Evaluates cultural fit and soft skills
  * 2. Manager Agent - Evaluates technical capabilities
  * 3. Sales Agent - Evaluates business impact potential
  */
-
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import https from 'https';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
-let genAI;
+let smartInferenceUrl;
 
-export async function initializeAgents() {
+export function initializeAgents() {
   try {
-    const apiKey = process.env.GEMINI_API_KEY;
-    
-    if (!apiKey || apiKey === 'YOUR_GEMINI_API_KEY_HERE') {
-      throw new Error('❌ GEMINI_API_KEY not set in .env file');
+    smartInferenceUrl = process.env.RAINDROP_SMART_INFERENCE_URL;
+    if (!smartInferenceUrl) {
+      throw new Error('RAINDROP_SMART_INFERENCE_URL not set in .env file');
     }
-    
-    genAI = new GoogleGenerativeAI(apiKey);
-    
-    console.log('✅ Gemini API initialized');
+
+    console.log('✅ SmartInference initialized');
     console.log('🤖 3 AI Agents ready: HR, Manager, Sales');
   } catch (error) {
     console.error('❌ Agents initialization failed:', error.message);
@@ -32,8 +28,64 @@ export async function initializeAgents() {
   }
 }
 
+/**
+ * A simple, promise-based HTTPS POST client to call the SmartInference endpoint.
+ * @param {string} model - The name of the model to use (e.g., 'gemini-pro').
+ * @param {string} prompt - The prompt to send to the model.
+ * @returns {Promise<string>} - The text response from the model.
+ */
+function callSmartInference(model, prompt) {
+  return new Promise((resolve, reject) => {
+    const payload = JSON.stringify({
+      model,
+      prompt,
+    });
+
+    const url = new URL(smartInferenceUrl);
+
+    const options = {
+      hostname: url.hostname,
+      port: url.port,
+      path: url.pathname,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(payload),
+      },
+    };
+
+    const req = https.request(options, (res) => {
+      let data = '';
+      res.on('data', (chunk) => {
+        data += chunk;
+      });
+      res.on('end', () => {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          try {
+            // Assuming the response is JSON with a "text" property
+            const jsonResponse = JSON.parse(data);
+            resolve(jsonResponse.text);
+          } catch(e) {
+            reject(new Error('Failed to parse JSON response from SmartInference'));
+          }
+        } else {
+          reject(new Error(`Request failed with status code ${res.statusCode}: ${data}`));
+        }
+      });
+    });
+
+    req.on('error', (e) => {
+      reject(e);
+    });
+
+    req.write(payload);
+    req.end();
+  });
+}
+
+
 // ============================================
-// AGENT PROMPTS
+// AGENT PROMPTS (No changes needed here)
 // ============================================
 
 const HR_AGENT_PROMPT = `You are an expert HR recruiter evaluating a candidate for a {role} position.
@@ -122,6 +174,32 @@ RESPOND IN JSON FORMAT:
   }
 }`;
 
+const NEGOTIATION_PROMPT = `You are a Senior Hiring Director acting as a mediator. Three of your AI agents have provided conflicting evaluations for a candidate. Your task is to analyze their detailed reports and determine a final, reconciled score and provide your reasoning.
+
+AGENT EVALUATIONS:
+1.  **HR Agent (Cultural & Soft Skills):**
+    - Score: {hr_score}/10
+    - Recommendation: {hr_recommendation}
+    - Analysis: {hr_analysis}
+
+2.  **Manager Agent (Technical Skills):**
+    - Score: {manager_score}/10
+    - Recommendation: {manager_recommendation}
+    - Analysis: {manager_analysis}
+
+3.  **Sales Agent (Business Impact):**
+    - Score: {sales_score}/10
+    - Recommendation: {sales_recommendation}
+    - Analysis: {sales_analysis}
+
+Based on this conflicting input, provide a final consensus score and a brief reasoning for your decision. The reasoning should explain how you weighed the different perspectives (e.g., "The technical skills are strong, but the cultural fit concerns from HR are significant, leading to a moderated score.").
+
+Respond ONLY in valid JSON format:
+{
+  "consensus_score": <1-10>,
+  "reasoning": "<explanation>"
+}`;
+
 // ============================================
 // AGENT CLASSES
 // ============================================
@@ -130,22 +208,21 @@ class Agent {
   constructor(name, prompt) {
     this.name = name;
     this.prompt = prompt;
-    this.model = genAI.getGenerativeModel({ model: 'gemini-pro' });
+    this.modelName = 'gemini-pro'; // As defined in raindrop.json
   }
-  
+
   async evaluate(candidate) {
     try {
       console.log(`🤖 ${this.name} evaluating ${candidate.name}...`);
-      
-      const prompt = this.prompt
-        .replace('{name}', candidate.name)
-        .replace('{email}', candidate.email)
-        .replace('{role}', candidate.role_applying)
-        .replace('{cv_text}', candidate.cv_text.substring(0, 2000)); // Limit CV length
-      
-      const result = await this.model.generateContent(prompt);
-      const responseText = result.response.text();
-      
+
+      const filledPrompt = this.prompt
+        .replace(/{name}/g, candidate.name)
+        .replace(/{email}/g, candidate.email)
+        .replace(/{role}/g, candidate.role_applying)
+        .replace(/{cv_text}/g, candidate.cv_text.substring(0, 2000)); // Limit CV length
+
+      const responseText = await callSmartInference(this.modelName, filledPrompt);
+
       // Parse JSON from response
       const regex = /\{[\s\S]*\}/;
       const jsonMatch = regex.exec(responseText);
@@ -157,7 +234,7 @@ class Agent {
       throw new Error('Invalid JSON response format from agent');
     } catch (error) {
       console.error(`❌ ${this.name} evaluation failed:`, error.message);
-      
+
       // Return default evaluation on error
       return {
         score: 5,
@@ -178,29 +255,29 @@ class Agent {
 export async function evaluateCandidate(candidate) {
   try {
     console.log(`\n📊 Starting multi-agent evaluation for ${candidate.name}`);
-    console.log('=' .repeat(60));
-    
+    console.log('='.repeat(60));
+
     // Create agents
     const hrAgent = new Agent('HR Agent', HR_AGENT_PROMPT);
     const managerAgent = new Agent('Manager Agent', MANAGER_AGENT_PROMPT);
     const salesAgent = new Agent('Sales Agent', SALES_AGENT_PROMPT);
-    
+
     // Run evaluations in parallel
     const [hrEval, managerEval, salesEval] = await Promise.all([
       hrAgent.evaluate(candidate),
       managerAgent.evaluate(candidate),
       salesAgent.evaluate(candidate)
     ]);
-    
+
     const evaluations = {
       hr: hrEval,
       manager: managerEval,
       sales: salesEval
     };
-    
-    console.log('=' .repeat(60));
+
+    console.log('='.repeat(60));
     console.log('✅ Multi-agent evaluation complete\n');
-    
+
     return evaluations;
   } catch (error) {
     console.error('❌ Multi-agent evaluation failed:', error);
@@ -220,43 +297,23 @@ export async function negotiateScores(evaluations) {
       Math.abs(evaluations.manager.score - avgScore),
       Math.abs(evaluations.sales.score - avgScore)
     );
-    
+
     if (maxDiff > 2) {
       console.log('⚖️ Score discrepancy detected, agents negotiating...');
+
+      const negotiationPrompt = NEGOTIATION_PROMPT
+        .replace('{hr_score}', evaluations.hr.score)
+        .replace('{hr_recommendation}', evaluations.hr.recommendation)
+        .replace('{hr_analysis}', JSON.stringify(evaluations.hr.analysis))
+        .replace('{manager_score}', evaluations.manager.score)
+        .replace('{manager_recommendation}', evaluations.manager.recommendation)
+        .replace('{manager_analysis}', JSON.stringify(evaluations.manager.analysis))
+        .replace('{sales_score}', evaluations.sales.score)
+        .replace('{sales_recommendation}', evaluations.sales.recommendation)
+        .replace('{sales_analysis}', JSON.stringify(evaluations.sales.analysis));
       
-      // Ask agents to reconsider
-      const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
-      
-      const negotiationPrompt = `You are a Senior Hiring Director acting as a mediator. Three of your AI agents have provided conflicting evaluations for a candidate. Your task is to analyze their detailed reports and determine a final, reconciled score and provide your reasoning.
+      const responseText = await callSmartInference('gemini-pro', negotiationPrompt);
 
-AGENT EVALUATIONS:
-1.  **HR Agent (Cultural & Soft Skills):**
-    - Score: ${evaluations.hr.score}/10
-    - Recommendation: ${evaluations.hr.recommendation}
-    - Analysis: ${JSON.stringify(evaluations.hr.analysis)}
-
-2.  **Manager Agent (Technical Skills):**
-    - Score: ${evaluations.manager.score}/10
-    - Recommendation: ${evaluations.manager.recommendation}
-    - Analysis: ${JSON.stringify(evaluations.manager.analysis)}
-
-3.  **Sales Agent (Business Impact):**
-    - Score: ${evaluations.sales.score}/10
-    - Recommendation: ${evaluations.sales.recommendation}
-    - Analysis: ${JSON.stringify(evaluations.sales.analysis)}
-
-Based on this conflicting input, provide a final consensus score and a brief reasoning for your decision. The reasoning should explain how you weighed the different perspectives (e.g., "The technical skills are strong, but the cultural fit concerns from HR are significant, leading to a moderated score.").
-
-Respond ONLY in valid JSON format:
-{
-  "consensus_score": <1-10>,
-  "reasoning": "<explanation>"
-}
-      `;
-      
-      const result = await model.generateContent(negotiationPrompt);
-      const responseText = result.response.text();
-      
       const regex = /\{[\s\S]*\}/;
       const jsonMatch = regex.exec(responseText);
       if (jsonMatch) {
@@ -266,7 +323,7 @@ Respond ONLY in valid JSON format:
       }
       throw new Error('Failed to parse JSON negotiation from AI response');
     }
-    
+
     return null;
   } catch (error) {
     console.error('Negotiation error:', error);
